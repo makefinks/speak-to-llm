@@ -32,25 +32,21 @@ def load_whisper(model_name, console):
         model = whisper.load_model(model_name)
     return model
 
-def initialize_text_to_speech(p):
-    player_stream = p.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
-    return player_stream
-
-def start_tts_thread(speech_queue, client, p):
+def start_tts_thread(speech_queue, client, player_stream):
     def text_to_speech_worker():
         while True:
             sentence = speech_queue.get()
             if sentence is None:
                 break
-            text_to_speech(sentence, speech_queue, client, p)
+            text_to_speech(sentence, speech_queue, client, player_stream)
             speech_queue.task_done()
 
     tts_thread = threading.Thread(target=text_to_speech_worker)
     tts_thread.start()
     return tts_thread
 
-def text_to_speech(llm_response, speech_queue, client, p):
-    player_stream = initialize_text_to_speech(p)
+def text_to_speech(llm_response, speech_queue, client, player_stream):
+    
     with client.audio.speech.with_streaming_response.create( 
          model="tts-1", 
          voice="echo",  # "alloy", "echo", "fable", "onyx", "shimmer",
@@ -182,8 +178,8 @@ def main_loop():
     
     preload_ollama(llm_model=args.llm_model, console=console)
 
-
-    tts_thread = start_tts_thread(speech_queue, client, p)
+    player_stream = p.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
+    tts_thread = start_tts_thread(speech_queue, client, player_stream)
 
     while True:
         file_path = record_audio(speech_queue, console)
