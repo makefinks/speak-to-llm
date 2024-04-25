@@ -77,10 +77,10 @@ def stream_llm_response(llm_model, messages, speech_queue, console):
         current_text += chunk_content
         console.print(chunk['message']['content'], end="")
     
-        lines = re.split(r'(?<=[.!?])\s+', current_text)
+        lines = re.split(r'(?<!\.\.)\.(?!\.)|(?<=[!?])\s+', current_text)
 
         for i, line in enumerate(lines):
-            if i < len(lines) - 1:  # Not the last element, hence complete
+            if i < len(lines) - 1:
                 # Check if it's a list item or an incomplete sentence
                 if not re.match(r"^\d+\.", line.strip()):
                     speech_queue.put(line.strip())
@@ -106,7 +106,7 @@ def transcribe_audio(file_path, model, messages, console):
     if file_path:
         with console.status("[bold green]transcribing...") as status:
             result = model.transcribe(file_path)
-            transcript = result['text']  # Store the transcript in a local variable
+            transcript = result['text']  
             console.print("[green]User: [yellow]" + result['text'])
 
             messages.append({
@@ -153,7 +153,9 @@ def record_audio(speech_queue, console):
                     flag = False
                     break
         sd.sleep(100)
-    recording = np.vstack(frames)  # Stack all the frames together
+        
+    # Stack all the frames together
+    recording = np.vstack(frames) 
     temp_file = tempfile.mktemp(suffix='.wav')
     sf.write(temp_file, recording, fs)
     
@@ -163,8 +165,8 @@ def main_loop():
 
     argparser = argparse.ArgumentParser()
 
-    argparser.add_argument("--whisper", type=str, default="large-v3", help="The name of the Whisper model to use.")
-    argparser.add_argument("--llm_model", type=str, default="jarvis-english", help="The name of the LLM model to use.")
+    argparser.add_argument("--whisper", type=str, default="small", help="The name of the Whisper model to use.")
+    argparser.add_argument("--llm_model", type=str, default="llama3", help="The name of the LLM model to use.")
     
     args = argparser.parse_args()
 

@@ -1,0 +1,9 @@
+numpy
+sounddevice
+soundfile
+openai-whisper
+keyboard
+rich
+ollama
+openai
+pyaudio
