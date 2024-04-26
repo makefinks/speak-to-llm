@@ -1,5 +1,9 @@
 # speak-to-llm
 
+Speak-to-llm is a straightforward tool that lets you chat with Large Language Models through the terminal featuring low latency Text-To-Speech powered by OpenAI. It supports all models available on Ollama, including the latest ones like Llama3 and Phi-3
+<hr> 
+
+## Demo 🤖
 ![demo](/images/demo.gif)
 
 ## Requirements
