@@ -13,12 +13,13 @@ from rich.spinner import Spinner
 from rich.markdown import Markdown
 from elevenlabs.client import ElevenLabs
 from elevenlabs import stream
-
-
 import ollama
 from openai import OpenAI
 import pyaudio
 import queue
+
+from audio import AudioManager
+
 
 
 def preload_ollama(llm_model, console):
@@ -35,42 +36,6 @@ def load_whisper(model_name, console):
         model = whisper.load_model(model_name)
     return model
 
-def start_tts_thread(speech_queue, client, player_stream, tts_service):
-    def text_to_speech_worker():
-        while True:
-            sentence = speech_queue.get()
-            if sentence is None:
-                break
-            text_to_speech(sentence, speech_queue, client, player_stream, tts_service)
-            speech_queue.task_done()
-
-    tts_thread = threading.Thread(target=text_to_speech_worker)
-    tts_thread.start()
-    return tts_thread
-
-def text_to_speech(llm_response, speech_queue, client: OpenAI | ElevenLabs, player_stream, tts_service):
-    
-    if tts_service == "openai":
-        with client.audio.speech.with_streaming_response.create( 
-            model="tts-1", 
-            voice="echo",  # "alloy", "echo", "fable", "onyx", "shimmer",
-            speed=1,
-            response_format="pcm",  # similar to WAV, but without a header chunk at the start. 
-            input=llm_response
-        ) as response: 
-            for chunk in response.iter_bytes(chunk_size=1024): 
-                if keyboard.is_pressed('s'):  # Stop playback if 's' is pressed
-                    speech_queue.queue.clear()
-                    break
-                player_stream.write(chunk)
-    elif tts_service == "elevenlabs":
-        audio_stream = client.generate(
-            model="eleven_turbo_v2",
-            voice="xctasy8XvGp2cVO9HL9k",
-            text=llm_response,
-            stream=True
-        )
-        stream(audio_stream)
 
 def stream_llm_response(llm_model, messages, speech_queue, silent_flag, console):
 
@@ -115,7 +80,6 @@ def stream_llm_response(llm_model, messages, speech_queue, silent_flag, console)
         "content": full_text
     })
 
-    
 def transcribe_audio(file_path, model, messages, console):
     if file_path:
         with console.status("[bold green]transcribing...") as status:
@@ -133,57 +97,14 @@ def transcribe_audio(file_path, model, messages, console):
     os.remove(file_path)
     return result['text']
 
-def record_audio(speech_queue, console):
-    console.print("[blue]Press 'space' to start and 'enter' to stop the recording. Press 's' to stop TTS and 'q' to exit the program.")
-    fs = 44100  # Sample rate
-    frames = []  # List to hold audio frames
-    flag = False
-
-    def callback(indata, frame_count, time_info, status):
-        if flag:
-            frames.append(indata.copy())
-
-    # Open a stream that uses callback for each block of data read
-    with sd.InputStream(samplerate=fs, channels=1, callback=callback):
-        while True:
-            if keyboard.is_pressed('space'):
-                flag = True
-                break
-            
-            if keyboard.is_pressed('q'):
-                console.print("[red]Exiting...")
-                speech_queue.queue.clear()
-                os._exit(0)
-
-            if keyboard.is_pressed('c'):
-                console.clear()
-                console.print("[blue]Press 'space' to start and 'enter' to stop the recording. Press 's' to stop TTS and 'q' to exit the program.")
-
-            sd.sleep(100) 
-
-        with console.status("[bold green]recording...") as status:
-            while True:
-                if keyboard.is_pressed('enter'):  # Stop recording when 'esc' is pressed
-                    flag = False
-                    break
-        sd.sleep(100)
-        
-    # Stack all the frames together
-    recording = np.vstack(frames) 
-    temp_file = tempfile.mktemp(suffix='.wav')
-    sf.write(temp_file, recording, fs)
-    
-    return temp_file
-
 def main_loop():
-
     argparser = argparse.ArgumentParser()
 
     argparser.add_argument("--whisper", type=str, default="small", help="The name of the Whisper model to use.")
     argparser.add_argument("--llm_model", type=str, default="llama3", help="The name of the LLM model to use.")
     argparser.add_argument("--silent", action="store_true", help="Disable TTS.")
     argparser.add_argument("--tts", choices=["openai", "elevenlabs"], default="openai", help="The TTS service to use.")
-    
+
     args = argparser.parse_args()
     messages = []
     console = Console()
@@ -195,17 +116,16 @@ def main_loop():
     if args.tts == "elevenlabs":
         eleven_client = ElevenLabs()
 
-    p = pyaudio.PyAudio()
     speech_queue = queue.Queue()
     preload_ollama(llm_model=args.llm_model, console=console)
 
     console.print(args)
 
-    player_stream = p.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
-    tts_thread = start_tts_thread(speech_queue, eleven_client, player_stream, args.tts)
+    audio_manager = AudioManager(speech_queue, console, args.tts)
+    tts_thread = audio_manager.start_tts_thread(eleven_client if args.tts == "elevenlabs" else client)
 
     while True:
-        file_path = record_audio(speech_queue, console)
+        file_path = audio_manager.record_audio()
         transcript = transcribe_audio(file_path, model, messages, console)
         stream_llm_response(args.llm_model, messages, speech_queue, args.silent, console)
 
