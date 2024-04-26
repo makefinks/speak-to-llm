@@ -11,6 +11,9 @@ import keyboard
 from rich.console import Console
 from rich.spinner import Spinner
 from rich.markdown import Markdown
+from elevenlabs.client import ElevenLabs
+from elevenlabs import stream
+
 
 import ollama
 from openai import OpenAI
@@ -32,35 +35,44 @@ def load_whisper(model_name, console):
         model = whisper.load_model(model_name)
     return model
 
-def start_tts_thread(speech_queue, client, player_stream):
+def start_tts_thread(speech_queue, client, player_stream, tts_service):
     def text_to_speech_worker():
         while True:
             sentence = speech_queue.get()
             if sentence is None:
                 break
-            text_to_speech(sentence, speech_queue, client, player_stream)
+            text_to_speech(sentence, speech_queue, client, player_stream, tts_service)
             speech_queue.task_done()
 
     tts_thread = threading.Thread(target=text_to_speech_worker)
     tts_thread.start()
     return tts_thread
 
-def text_to_speech(llm_response, speech_queue, client, player_stream):
+def text_to_speech(llm_response, speech_queue, client: OpenAI | ElevenLabs, player_stream, tts_service):
     
-    with client.audio.speech.with_streaming_response.create( 
-         model="tts-1", 
-         voice="echo",  # "alloy", "echo", "fable", "onyx", "shimmer",
-         speed=1,
-         response_format="pcm",  # similar to WAV, but without a header chunk at the start. 
-         input=llm_response
-    ) as response: 
-        for chunk in response.iter_bytes(chunk_size=1024): 
-            if keyboard.is_pressed('s'):  # Stop playback if 's' is pressed
-                speech_queue.queue.clear()
-                break
-            player_stream.write(chunk)
+    if tts_service == "openai":
+        with client.audio.speech.with_streaming_response.create( 
+            model="tts-1", 
+            voice="echo",  # "alloy", "echo", "fable", "onyx", "shimmer",
+            speed=1,
+            response_format="pcm",  # similar to WAV, but without a header chunk at the start. 
+            input=llm_response
+        ) as response: 
+            for chunk in response.iter_bytes(chunk_size=1024): 
+                if keyboard.is_pressed('s'):  # Stop playback if 's' is pressed
+                    speech_queue.queue.clear()
+                    break
+                player_stream.write(chunk)
+    elif tts_service == "elevenlabs":
+        audio_stream = client.generate(
+            model="eleven_turbo_v2",
+            voice="xctasy8XvGp2cVO9HL9k",
+            text=llm_response,
+            stream=True
+        )
+        stream(audio_stream)
 
-def stream_llm_response(llm_model, messages, speech_queue, console):
+def stream_llm_response(llm_model, messages, speech_queue, silent_flag, console):
 
     stream = ollama.chat(
         model = llm_model,
@@ -78,22 +90,24 @@ def stream_llm_response(llm_model, messages, speech_queue, console):
         console.print(chunk['message']['content'], end="")
     
         lines = re.split(r'(?<!\.\.)\.(?!\.)|(?<=[!?])\s+', current_text)
-
-        for i, line in enumerate(lines):
-            if i < len(lines) - 1:
-                # Check if it's a list item or an incomplete sentence
-                if not re.match(r"^\d+\.", line.strip()):
-                    speech_queue.put(line.strip())
+    
+        if not silent_flag:
+            for i, line in enumerate(lines):
+                if i < len(lines) - 1:
+                    # Check if it's a list item or an incomplete sentence
+                    if not re.match(r"^\d+\.", line.strip()):
+                        speech_queue.put(line.strip())
+                    else:
+                        current_text = line
                 else:
+                    # Last element, might be incomplete
                     current_text = line
-            else:
-                # Last element, might be incomplete
-                current_text = line
 
     print("\n")
-    # Process any remaining text after streaming
-    if current_text.strip():
-        speech_queue.put(current_text.strip())
+    if not silent_flag:  
+        # Process any remaining text after streaming
+        if current_text.strip():
+            speech_queue.put(current_text.strip())
 
     # Append the entire response to messages once complete
     messages.append({
@@ -167,26 +181,33 @@ def main_loop():
 
     argparser.add_argument("--whisper", type=str, default="small", help="The name of the Whisper model to use.")
     argparser.add_argument("--llm_model", type=str, default="llama3", help="The name of the LLM model to use.")
+    argparser.add_argument("--silent", action="store_true", help="Disable TTS.")
+    argparser.add_argument("--tts", choices=["openai", "elevenlabs"], default="openai", help="The TTS service to use.")
     
     args = argparser.parse_args()
-
     messages = []
     console = Console()
+
     console.clear()
     model = load_whisper(model_name=args.whisper, console=console)
     client = OpenAI()
+
+    if args.tts == "elevenlabs":
+        eleven_client = ElevenLabs()
+
     p = pyaudio.PyAudio()
     speech_queue = queue.Queue()
-    
     preload_ollama(llm_model=args.llm_model, console=console)
 
+    console.print(args)
+
     player_stream = p.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
-    tts_thread = start_tts_thread(speech_queue, client, player_stream)
+    tts_thread = start_tts_thread(speech_queue, eleven_client, player_stream, args.tts)
 
     while True:
         file_path = record_audio(speech_queue, console)
         transcript = transcribe_audio(file_path, model, messages, console)
-        stream_llm_response(args.llm_model, messages, speech_queue, console)
+        stream_llm_response(args.llm_model, messages, speech_queue, args.silent, console)
 
 if __name__ == "__main__":
     main_loop()
