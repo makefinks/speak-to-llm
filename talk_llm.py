@@ -24,6 +24,11 @@ from audio import AudioManager
 
 def preload_ollama(llm_model, console):
     with console.status(f"[bold green]Loading LLM: {llm_model}...") as status:
+        model_list = ollama.list()
+
+        if llm_model not in model_list.keys():
+            ollama.pull(llm_model)
+        
         ollama.chat(model=llm_model, messages=[{"role": "user", "content": "reply with 'yes'"}])
 
 def init_console():
