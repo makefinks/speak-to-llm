@@ -1,6 +1,6 @@
 # speak-to-llm
 
-Speak-to-llm is a straightforward tool that lets you chat with Large Language Models through the terminal featuring low latency Text-To-Speech powered by OpenAI. It supports all models available on Ollama, including the latest ones like Llama3 and Phi-3
+Speak-to-llm is a straightforward tool that lets you chat with Large Language Models through the terminal featuring low latency Text-To-Speech powered by OpenAI and ElevenLabs It supports all models available on Ollama, including the latest ones like Llama3 and Phi-3.
 <hr> 
 
 ## Demo 🤖
@@ -41,7 +41,7 @@ choco install ffmpeg
 ````
 
 
-### MPV ( Needed for elevenlabs TTS)
+### MPV ( Needed for elevenlabs TTS )
 If you want to use elevenlabs you need to install mpv: https://mpv.io/installation/
 
 with Chocolatey (run shell as admin):
