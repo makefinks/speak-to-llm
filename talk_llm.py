@@ -20,8 +20,6 @@ import queue
 
 from audio import AudioManager
 
-
-
 def preload_ollama(llm_model, console):
     with console.status(f"[bold green]Loading LLM: {llm_model}...") as status:
         model_list = ollama.list()
@@ -124,15 +122,14 @@ def main_loop():
     speech_queue = queue.Queue()
     preload_ollama(llm_model=args.llm_model, console=console)
 
-    console.print(args)
-
     audio_manager = AudioManager(speech_queue, console, args.tts)
     tts_thread = audio_manager.start_tts_thread(eleven_client if args.tts == "elevenlabs" else client)
 
     while True:
         file_path = audio_manager.record_audio()
-        transcript = transcribe_audio(file_path, model, messages, console)
-        stream_llm_response(args.llm_model, messages, speech_queue, args.silent, console)
+        if file_path:
+            transcript = transcribe_audio(file_path, model, messages, console)
+            stream_llm_response(args.llm_model, messages, speech_queue, args.silent, console)
 
 if __name__ == "__main__":
     main_loop()
