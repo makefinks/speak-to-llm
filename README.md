@@ -23,6 +23,9 @@ export OPENAI_API_KEY = your_openai_api_key
 ```
 If you are not familiar with the process you can visit this [guide](https://www.immersivelimit.com/tutorials/adding-your-openai-api-key-to-system-environment-variables)
 
+## ffmpeg
+Download and install ffmpeg from https://ffmpeg.org/download.html and add it to the path
+
 ## Installation
 
 Clone the repository and install the requirements.

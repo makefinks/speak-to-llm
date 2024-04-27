@@ -100,6 +100,8 @@ class AudioManager:
                 break
             else:
                 for audio_chunk in audio_stream:
+                    if keyboard.is_pressed('s'):
+                        break
                     silence = np.zeros(4096, dtype=np.int16)
                     self.player_stream.write(audio_chunk)
                 self.player_stream.write(silence)
