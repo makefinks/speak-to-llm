@@ -7,3 +7,5 @@ rich
 ollama
 openai
 pyaudio
+elevenlabs
+pynput

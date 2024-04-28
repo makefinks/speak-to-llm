@@ -13,7 +13,7 @@ import threading
 from rich.console import Console
 from rich.spinner import Spinner
 from elevenlabs.client import ElevenLabs
-from elevenlabs import stream
+from elevenlabs import VoiceSettings, stream
 from openai import OpenAI
 import queue
 import time
@@ -60,6 +60,8 @@ class AudioManager:
                         self.playback = False
                         self.speech_queue.queue.clear()
                         self.audio_stream_queue.queue.clear()
+                elif key.char == "c":
+                    self.console.clear()
             except AttributeError:
                 # Handle the case where key.char is not available
                 pass
@@ -123,7 +125,10 @@ class AudioManager:
             audio_stream = client.generate(
                 optimize_streaming_latency="2",
                 model="eleven_turbo_v2",
-                voice="xctasy8XvGp2cVO9HL9k",
+                voice="UEKYgullGqaF0keqT8Bu",
+                voice_settings=VoiceSettings(
+                    stability=0.6, similarity_boost=0.8, style=0.3, use_speaker_boost=True
+                ),
                 text=llm_response,
                 stream=True
             )
