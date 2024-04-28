@@ -5,6 +5,7 @@ import sounddevice as sd
 import numpy as np
 import tempfile
 import soundfile as sf
+import torch
 import whisper
 import threading
 import keyboard
@@ -17,6 +18,7 @@ import ollama
 from openai import OpenAI
 import pyaudio
 import queue
+from faster_whisper import WhisperModel
 
 from audio import AudioManager
 
@@ -83,22 +85,24 @@ def stream_llm_response(llm_model, messages, speech_queue, silent_flag, console)
         "content": full_text
     })
 
-def transcribe_audio(file_path, model, messages, console):
+def transcribe_audio(file_path, model: WhisperModel, messages, console):
     if file_path:
         with console.status("[bold green]transcribing...") as status:
-            result = model.transcribe(file_path)
-            transcript = result['text']  
-            console.print("[green]User: [yellow]" + result['text'])
+            segments, info = model.transcribe(file_path)
+            transcription = ""
+            for segment in segments:
+                transcription += segment.text + " "
+            console.print("[green]User: [yellow]" + transcription)
 
             messages.append({
                 "role": "user",
-                "content": transcript
+                "content": transcription
              })
     else:
         console.print("[red]No audio file provided for transcription.")
 
     os.remove(file_path)
-    return result['text']
+    return transcription
 
 def main_loop():
     argparser = argparse.ArgumentParser()
@@ -107,13 +111,24 @@ def main_loop():
     argparser.add_argument("--llm_model", type=str, default="llama3", help="The name of the LLM model to use.")
     argparser.add_argument("--silent", action="store_true", help="Disable TTS.")
     argparser.add_argument("--tts", choices=["openai", "elevenlabs"], default="openai", help="The TTS service to use.")
+    argparser.add_argument("--lang", type=str, choices=["en", "multi"], default="en", help="The language to use for the TTS service.")
+    argparser.add_argument("--voice_id", type=str, default="ErXwobaYiN019PkySvjV", help="The voice ID to use for Eleven Labs TTS.")
+
 
     args = argparser.parse_args()
     messages = []
     console = Console()
 
     console.clear()
-    model = load_whisper(model_name=args.whisper, console=console)
+
+
+    # check if cuda is available
+    if not torch.cuda.is_available():
+        console.print("[red]CUDA is not available. Using CPU for inference.")
+        model = WhisperModel(args.whisper, device="cpu", compute_type="float32")
+    else:
+        model = WhisperModel(args.whisper, device="cuda", compute_type="float16")
+
     client = OpenAI()
 
     if args.tts == "elevenlabs":
@@ -122,7 +137,7 @@ def main_loop():
     speech_queue = queue.Queue()
     preload_ollama(llm_model=args.llm_model, console=console)
 
-    audio_manager = AudioManager(speech_queue, console, args.tts)
+    audio_manager = AudioManager(speech_queue, console, args.tts, args.lang, args.voice_id)
     tts_thread = audio_manager.start_tts_thread(eleven_client if args.tts == "elevenlabs" else client)
 
     while True:

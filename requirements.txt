@@ -9,3 +9,5 @@ openai
 pyaudio
 elevenlabs
 pynput
+
+faster-whisper

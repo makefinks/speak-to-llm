@@ -2,6 +2,7 @@ from asyncio import sleep
 import asyncio
 from io import BytesIO
 import subprocess
+from typing import Literal
 import pyaudio
 from pynput.keyboard import Listener, Key
 import os
@@ -21,11 +22,13 @@ import time
 
 
 class AudioManager:
-    def __init__(self, speech_queue, console, tts_service):
+    def __init__(self, speech_queue: queue.Queue, console: Console, tts_service: Literal["openai", "elevelabs"], language: Literal["en", "multi"], voice_id: str):
         self.tts_service = tts_service
         self.audio_stream_queue= queue.Queue()
         self.speech_queue = speech_queue
         self.console = console
+        self.language = language
+        self.voice_id = voice_id
         self.fs = 44100
         self.frames = []
         self.recording = False
@@ -124,8 +127,8 @@ class AudioManager:
         elif self.tts_service == "elevenlabs":
             audio_stream = client.generate(
                 optimize_streaming_latency="2",
-                model="eleven_turbo_v2",
-                voice="UEKYgullGqaF0keqT8Bu",
+                model="eleven_turbo_v2" if self.language == "en" else "eleven_multilingual_v2",
+                voice=self.voice_id,
                 voice_settings=VoiceSettings(
                     stability=0.6, similarity_boost=0.8, style=0.3, use_speaker_boost=True
                 ),

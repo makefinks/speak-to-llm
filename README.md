@@ -91,6 +91,20 @@ Which LLM model to run with ollama. [Here](https://ollama.com/library) is a list
 
 Which Text-To-Speech provider to use. Options are "openai" or "elevenlabs".
 
+> --lang <language>
+
+Which language the conversation is going to be in. Options are "en" and "multi". Elevenlabs support a turbo model for english that is used when "en" is selected as the conversation language. The option "multi" is used for every other language but the latency is higher.
+
+> --voice_id <elevenlabs_voice_id>
+
+Which voice to use for ElevenLabs TTS.
+
+> --silent
+
+If the silent flag is set, no tts api requests are made and the output is purely in text.
+
+
+
 
 
 
