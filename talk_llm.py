@@ -22,7 +22,7 @@ from faster_whisper import WhisperModel
 
 from audio import AudioManager
 
-def preload_ollama(llm_model, console):
+def preload_ollama(llm_model, console: Console):
     with console.status(f"[bold green]Loading LLM: {llm_model}...") as status:
         model_list = ollama.list()
 
@@ -36,13 +36,13 @@ def init_console():
     console.clear()
     return console
 
-def load_whisper(model_name, console):
+def load_whisper(model_name: str, console: Console):
     with console.status("[bold green]Loading Whisper model...") as status:
         model = whisper.load_model(model_name)
     return model
 
 
-def stream_llm_response(llm_model, messages, speech_queue, silent_flag, console):
+def stream_llm_response(llm_model: str, messages: list[str], speech_queue: queue.Queue, silent_flag: bool, console: Console):
 
     stream = ollama.chat(
         model = llm_model,
@@ -85,18 +85,25 @@ def stream_llm_response(llm_model, messages, speech_queue, silent_flag, console)
         "content": full_text
     })
 
-def transcribe_audio(file_path, model: WhisperModel, messages, console):
+def transcribe_audio(file_path: str, model: WhisperModel, messages: list[str], console: Console, context: str | None) -> str:
     if file_path:
         with console.status("[bold green]transcribing...") as status:
             segments, info = model.transcribe(file_path)
             transcription = ""
             for segment in segments:
                 transcription += segment.text + " "
+            
+            if context:
+                content = "Context: " + context + "\n\n User: " + transcription 
+                console.print("[green]Context: [light_slate_blue]" + context)
+            else:
+                content = transcription
+
             console.print("[green]User: [yellow]" + transcription)
 
             messages.append({
                 "role": "user",
-                "content": transcription
+                "content": content
              })
     else:
         console.print("[red]No audio file provided for transcription.")
@@ -105,10 +112,11 @@ def transcribe_audio(file_path, model: WhisperModel, messages, console):
     return transcription
 
 def main_loop():
+
     argparser = argparse.ArgumentParser()
 
     argparser.add_argument("--whisper", type=str, default="small", help="The name of the Whisper model to use.")
-    argparser.add_argument("--llm_model", type=str, default="llama3", help="The name of the LLM model to use.")
+    argparser.add_argument("--llm", type=str, default="llama3", help="The name of the LLM model to use.")
     argparser.add_argument("--silent", action="store_true", help="Disable TTS.")
     argparser.add_argument("--tts", choices=["openai", "elevenlabs"], default="openai", help="The TTS service to use.")
     argparser.add_argument("--lang", type=str, choices=["en", "multi"], default="en", help="The language to use for the TTS service.")
@@ -135,16 +143,17 @@ def main_loop():
         eleven_client = ElevenLabs()
 
     speech_queue = queue.Queue()
-    preload_ollama(llm_model=args.llm_model, console=console)
+    preload_ollama(llm_model=args.llm, console=console)
 
     audio_manager = AudioManager(speech_queue, console, args.tts, args.lang, args.voice_id)
     tts_thread = audio_manager.start_tts_thread(eleven_client if args.tts == "elevenlabs" else client)
 
     while True:
-        file_path = audio_manager.record_audio()
+        file_path, context = audio_manager.record_audio()
+
         if file_path:
-            transcript = transcribe_audio(file_path, model, messages, console)
-            stream_llm_response(args.llm_model, messages, speech_queue, args.silent, console)
+            transcribe_audio(file_path, model, messages, console, context)
+            stream_llm_response(args.llm, messages, speech_queue, args.silent, console)
 
 if __name__ == "__main__":
     main_loop()

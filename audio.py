@@ -4,7 +4,7 @@ from io import BytesIO
 import subprocess
 from typing import Literal
 import pyaudio
-from pynput.keyboard import Listener, Key
+from pynput.keyboard import Listener, Key, KeyCode
 import os
 import sounddevice as sd
 import numpy as np
@@ -18,8 +18,11 @@ from elevenlabs import VoiceSettings, stream
 from openai import OpenAI
 import queue
 import time
+import pyperclip
 
-
+RECORD_COMBINATION = {Key.shift, Key.space, Key.ctrl}
+RECORD_WITH_CONTEXT = {Key.shift, Key.ctrl, KeyCode(char='t')}
+current = set()
 
 class AudioManager:
     def __init__(self, speech_queue: queue.Queue, console: Console, tts_service: Literal["openai", "elevelabs"], language: Literal["en", "multi"], voice_id: str):
@@ -33,6 +36,7 @@ class AudioManager:
         self.frames = []
         self.recording = False
         self.playback = True
+        self.context = False
         self.p = pyaudio.PyAudio()
         self.player_stream = self.p.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True, frames_per_buffer=8048)
 
@@ -46,8 +50,18 @@ class AudioManager:
             )
 
     def on_press(self, key):
-        if key == Key.space:
-            self.recording = True
+
+        if key in RECORD_COMBINATION:
+            current.add(key)
+            if all(k in current for k in RECORD_COMBINATION):
+                self.recording = True
+
+        elif key in RECORD_WITH_CONTEXT:
+            current.add(key)
+            if all(k in current for k in RECORD_WITH_CONTEXT):
+                self.context = True
+                self.recording = True
+        
         elif key == Key.enter:
             if self.recording:
                 self.recording = False
@@ -69,9 +83,16 @@ class AudioManager:
                 # Handle the case where key.char is not available
                 pass
 
-    def record_audio(self):
+    def on_release(self, key):
+        try:
+            current.remove(key)
+        except KeyError:
+            pass
+
+
+    def record_audio(self) -> tuple[str, str | None]:
         # Start listening to keyboard events in a separate thread to avoid blocking
-        listener = Listener(on_press=self.on_press)
+        listener = Listener(on_press=self.on_press, on_release=self.on_release)
         listener.start()
 
         try:
@@ -102,14 +123,17 @@ class AudioManager:
         temp_file = tempfile.mktemp(suffix='.wav')
         sf.write(temp_file, recording, self.fs)
         self.frames = []  # Clear frames after saving to file
-        return temp_file
+
+        clip_context = pyperclip.paste() if self.context else None
+        self.context = False
+        return temp_file, clip_context
 
     def callback(self, indata, frame_count, time_info, status):
         if self.recording:
             self.frames.append(indata.copy())
 
 
-    def text_to_speech(self, llm_response, client: OpenAI | ElevenLabs):
+    def text_to_speech(self, llm_response: str, client: OpenAI | ElevenLabs):
         if self.tts_service == "openai":
             with client.audio.speech.with_streaming_response.create(
                 model="tts-1",
@@ -158,7 +182,7 @@ class AudioManager:
                     self.mpv_process.stdin.flush()
 
 
-    def start_tts_thread(self, client):
+    def start_tts_thread(self, client: OpenAI | ElevenLabs):
         def text_to_speech_worker():
             while True:
                 sentence = self.speech_queue.get()

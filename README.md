@@ -83,7 +83,7 @@ python talk_llm.py
 
 Which whisper model to use for transcription ([All Models](https://github.com/openai/whisper)). Use large-v3 for the best quality if you have ~10GB VRAM.
 
-> --llm_model <model_name>
+> --llm <model_name>
 
 Which LLM model to run with ollama. [Here](https://ollama.com/library) is a list of available models on ollama. Defaults to Llama3-8b.
 
