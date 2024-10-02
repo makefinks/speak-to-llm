@@ -19,7 +19,6 @@ from openai import OpenAI
 import queue
 import time
 import pyperclip
-
 RECORD_COMBINATION = {Key.shift, Key.space, Key.ctrl}
 RECORD_WITH_CONTEXT = {Key.shift, Key.ctrl, KeyCode(char='t')}
 current = set()
@@ -97,7 +96,7 @@ class AudioManager:
 
         try:
             # Use the status indicator in a separate thread or manage it dynamically
-            with self.console.status("[bold blue]Press 'space' to start and 'enter' to stop the recording. Press 's' to stop TTS and 'q' to exit the program.") as status:
+            with self.console.status("[bold blue]Press 'shift' + 'ctrl' + 'space' to start and 'enter' to stop the recording. Press 's' to stop TTS and 'q' to exit the program.") as status:
                 while not self.recording:
                     time.sleep(0.1)  # Small sleep to reduce CPU usage
                     if not listener.is_alive():

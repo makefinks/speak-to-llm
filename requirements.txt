@@ -11,3 +11,4 @@ elevenlabs
 pynput
 
 faster-whisper
+pyperclip
