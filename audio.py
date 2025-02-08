@@ -1,43 +1,75 @@
-from asyncio import sleep
-import asyncio
-from io import BytesIO
-import subprocess
-from typing import Literal
-import pyaudio
-from pynput.keyboard import Listener, Key
 import os
-import sounddevice as sd
-import numpy as np
-import tempfile
-import soundfile as sf
-import threading
-from rich.console import Console
-from rich.spinner import Spinner
-from elevenlabs.client import ElevenLabs
-from elevenlabs import VoiceSettings, stream
-from openai import OpenAI
 import queue
+import subprocess
+import sys
+import tempfile
+import threading
 import time
+from typing import Literal, Optional, Union
 
+import numpy as np
+import pyaudio
+import sounddevice as sd
+import soundfile as sf
+from openai import OpenAI
+from pynput.keyboard import Key, KeyCode, Listener
+from rich.console import Console
+
+from elevenlabs import VoiceSettings
+from elevenlabs.client import ElevenLabs
 
 
 class AudioManager:
-    def __init__(self, speech_queue: queue.Queue, console: Console, tts_service: Literal["openai", "elevelabs"], language: Literal["en", "multi"], voice_id: str):
-        self.tts_service = tts_service
-        self.audio_stream_queue= queue.Queue()
-        self.speech_queue = speech_queue
-        self.console = console
-        self.language = language
-        self.voice_id = voice_id
-        self.fs = 44100
-        self.frames = []
-        self.recording = False
-        self.playback = True
-        self.p = pyaudio.PyAudio()
-        self.player_stream = self.p.open(format=pyaudio.paInt16, channels=1, rate=24000, output=True, frames_per_buffer=8048)
+    """
+    A class to manage audio recording, text-to-speech conversion, and audio playback.
+    
+    Depending on the TTS service specified, this class either streams audio
+    via OpenAI or ElevenLabs. It also listens for keyboard input to control
+    recording and playback.
+    """
 
-        mpv_command = ["mpv", "--no-cache", "--no-terminal", "--", "fd://0"]
-        if tts_service == "elevenlabs":
+    def __init__(
+        self,
+        speech_queue: queue.Queue[str],
+        console: Console,
+        tts_service: Literal["openai", "elevenlabs"],
+        language: Literal["en", "multi"],
+        voice_id: str,
+    ) -> None:
+        """
+        Initialize the AudioManager.
+
+        Args:
+            speech_queue: A queue containing text sentences to be spoken.
+            console: A rich Console object for printing status messages.
+            tts_service: The TTS service to use ("openai" or "elevenlabs").
+            language: The language setting ("en" or "multi").
+            voice_id: The voice identifier (used by the TTS service).
+        """
+        self.tts_service: Literal["openai", "elevenlabs"] = tts_service
+        self.audio_stream_queue: queue.Queue[Optional[bytes]] = queue.Queue()
+        self.speech_queue: queue.Queue[str] = speech_queue
+        self.console: Console = console
+        self.language: Literal["en", "multi"] = language
+        self.voice_id: str = voice_id
+
+        self.fs: int = 44100  # Sampling frequency for recording
+        self.frames: list[np.ndarray] = []
+        self.recording: bool = False
+        self.playback: bool = True
+
+        self.p: pyaudio.PyAudio = pyaudio.PyAudio()
+        self.player_stream: pyaudio.Stream = self.p.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=24000,
+            output=True,
+            frames_per_buffer=8048,
+        )
+
+        self.mpv_process: Optional[subprocess.Popen] = None
+        if self.tts_service == "elevenlabs":
+            mpv_command = ["mpv", "--no-cache", "--no-terminal", "--", "fd://0"]
             self.mpv_process = subprocess.Popen(
                 mpv_command,
                 stdin=subprocess.PIPE,
@@ -45,84 +77,161 @@ class AudioManager:
                 stderr=subprocess.DEVNULL,
             )
 
-    def on_press(self, key):
+    def on_press(self, key: Key | KeyCode) -> Optional[bool]:
+        """
+        Handle key press events.
+
+        - Space: Start recording.
+        - Enter: Stop recording.
+        - 'q': Exit the program.
+        - 's': Stop current playback and clear queues.
+        - 'c': Clear the console.
+
+        Args:
+            key: The key that was pressed.
+
+        Returns:
+            False if the listener should stop, otherwise None.
+        """
         if key == Key.space:
             self.recording = True
         elif key == Key.enter:
             if self.recording:
                 self.recording = False
                 self.playback = True
-                return False  # Stop listener
+                return False  # Stop the listener
         else:
             try:
-                if key.char == 'q':
-                    os._exit(0)
-                elif key.char == "s":
-                    if self.audio_stream_queue.qsize() > 0:
+                if hasattr(key, "char"):
+                    if key.char == "q":
+                        os._exit(0)
+                    elif key.char == "s":
                         self.console.print("[bold red]Stopping playback...")
                         self.playback = False
-                        self.speech_queue.queue.clear()
-                        self.audio_stream_queue.queue.clear()
-                elif key.char == "c":
-                    self.console.clear()
+                        # Clear both queues
+                        with self.speech_queue.mutex:
+                            self.speech_queue.queue.clear()
+                        with self.audio_stream_queue.mutex:
+                            self.audio_stream_queue.queue.clear()
+
+                        if self.tts_service == "openai":
+                            # Fully close and reinitialize the playback stream
+                            self.player_stream.stop_stream()
+                            self.player_stream.close()
+                            self.player_stream = self.p.open(
+                                format=pyaudio.paInt16,
+                                channels=1,
+                                rate=24000,
+                                output=True,
+                                frames_per_buffer=8048,
+                            )
+                        else:
+                            if self.mpv_process:
+                                self.mpv_process.terminate()
+                                self.mpv_process.wait()
+                                mpv_command = ["mpv", "--no-cache", "--no-terminal", "--", "fd://0"]
+                                self.mpv_process = subprocess.Popen(
+                                    mpv_command,
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                )
+
+                    elif key.char == "c":
+                        self.console.clear()
             except AttributeError:
-                # Handle the case where key.char is not available
                 pass
 
-    def record_audio(self):
-        # Start listening to keyboard events in a separate thread to avoid blocking
+        return None
+
+    def record_audio(self) -> Optional[str]:
+        """
+        Record audio from the default input device until the user stops recording.
+
+        The recording is started when the user presses the space bar and stopped when
+        the user presses enter. A temporary WAV file is created with the recorded audio.
+
+        Returns:
+            The path to the temporary WAV file containing the recording, or None if no audio was recorded.
+        """
+
         listener = Listener(on_press=self.on_press)
         listener.start()
-
         try:
-            # Use the status indicator in a separate thread or manage it dynamically
-            with self.console.status("[bold blue]Press 'space' to start and 'enter' to stop the recording. Press 's' to stop TTS and 'q' to exit the program.") as status:
-                while not self.recording:
-                    time.sleep(0.1)  # Small sleep to reduce CPU usage
-                    if not listener.is_alive():
-                        break  # If listener stops, break the loop
+            self.console.print(
+                "[bold blue]Press 'space' to start and 'enter' to stop the recording. "
+                "Press 's' to stop TTS and 'q' to exit the program."
+            )
+            # Wait for the recording to start.
+            while not self.recording:
+                time.sleep(0.1)
+                if not listener.is_alive():
+                    break
 
-                if self.recording:
-                    status.update("[bold green]Recording...")
-                    with sd.InputStream(samplerate=self.fs, channels=1, callback=self.callback):
+            if self.recording:
+                with self.console.status("[bold green]Recording...") as status:
+                    with sd.InputStream(
+                        samplerate=self.fs, channels=1, callback=self.callback
+                    ):
                         while self.recording:
-                            time.sleep(0.1)  # Continue to sleep while recording to reduce CPU usage
+                            time.sleep(0.1)
 
         finally:
             listener.stop()
             listener.join()
 
-        # After recording stops
         if not self.frames:
             self.console.print("[bold red]No audio recorded.")
             return None
 
-        # Create the recording file
-        recording = np.vstack(self.frames)
-        temp_file = tempfile.mktemp(suffix='.wav')
-        sf.write(temp_file, recording, self.fs)
-        self.frames = []  # Clear frames after saving to file
-        return temp_file
+        # Save the recording
+        recording: np.ndarray = np.vstack(self.frames)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+            sf.write(tmp_file.name, recording, self.fs)
+            temp_file_path = tmp_file.name
 
-    def callback(self, indata, frame_count, time_info, status):
+        self.frames.clear()
+        return temp_file_path
+
+    def callback(
+        self, indata: np.ndarray, frame_count: int, time_info: dict, status: sd.CallbackFlags
+    ) -> None:
+        """
+        Audio callback function to handle incoming audio data.
+
+        Args:
+            indata: The recorded audio data.
+            frame_count: The number of frames.
+            time_info: A dictionary containing timing information.
+            status: A CallbackFlags object with error/overflow information.
+        """
         if self.recording:
             self.frames.append(indata.copy())
 
+    def text_to_speech(
+        self, text: str, client: OpenAI | ElevenLabs
+    ) -> None:
+        """
+        Convert the provided text to speech using the selected TTS service.
 
-    def text_to_speech(self, llm_response, client: OpenAI | ElevenLabs):
+        Args:
+            text: The text to convert to speech.
+            client: An instance of the TTS service client.
+        """
         if self.tts_service == "openai":
             with client.audio.speech.with_streaming_response.create(
-                model="tts-1",
-                voice="echo",
+                model="tts-1-hd",
+                voice="nova",
                 speed=1,
                 response_format="pcm",
-                input=llm_response
+                input=text,
             ) as response:
-                for chunk in response.iter_bytes(chunk_size=1024):
+                for chunk in response.iter_bytes(chunk_size=128):
                     self.audio_stream_queue.put(chunk)
-            # append silence because Openai voice starts instantly
+                    
+            # Append silence (converted to bytes) to ensure smooth playback.
             silence = np.zeros(4096, dtype=np.int16)
-            self.audio_stream_queue.put(silence)
+            self.audio_stream_queue.put(silence.tobytes())
 
         elif self.tts_service == "elevenlabs":
             audio_stream = client.generate(
@@ -130,46 +239,69 @@ class AudioManager:
                 model="eleven_turbo_v2" if self.language == "en" else "eleven_multilingual_v2",
                 voice=self.voice_id,
                 voice_settings=VoiceSettings(
-                    stability=0.6, similarity_boost=0.8, style=0.3, use_speaker_boost=True
+                    stability=0.6,
+                    similarity_boost=0.8,
+                    style=0.3,
+                    use_speaker_boost=True,
                 ),
-                text=llm_response,
-                stream=True
+                text=text,
+                stream=True,
             )
             for chunk in audio_stream:
                 self.audio_stream_queue.put(chunk)
-            """ silence = np.zeros(4096, dtype=np.int16)
-            self.audio_stream_queue.put(silence) """
+            # Optionally, append silence if needed.
+            # silence = np.zeros(4096, dtype=np.int16)
+            # self.audio_stream_queue.put(silence.tobytes())
 
-    def audio_stream_worker(self):
+    def audio_stream_worker(self) -> None:
+        """
+        Worker method to continuously write audio chunks from the audio stream queue
+        to the output device.
+        """
         while True:
-            if self.playback:
-                if self.tts_service == "openai":
-                    audio_chunk = self.audio_stream_queue.get()
-                    if audio_chunk is None:
-                        break
-                
-                    self.player_stream.write(audio_chunk)
-                else:
-                    audio_chunk = self.audio_stream_queue.get() 
-                    if audio_chunk is None:
-                        break
+            audio_chunk: Optional[bytes] = self.audio_stream_queue.get()
+            if audio_chunk is None:
+                break
 
-                    self.mpv_process.stdin.write(audio_chunk)  # type: ignore
+            if not self.playback:
+                continue  
+            
+            if self.tts_service == "openai":
+                self.player_stream.write(audio_chunk)
+            else:
+                # For elevenlabs, ensure that the mpv process is available.
+                if self.mpv_process is not None and self.mpv_process.stdin:
+                    self.mpv_process.stdin.write(audio_chunk)
                     self.mpv_process.stdin.flush()
 
+    def start_tts_thread(
+        self, client: OpenAI | ElevenLabs
+    ) -> threading.Thread:
+        """
+        Start a background thread that consumes text from the speech queue,
+        converts it to speech using the TTS service, and streams the resulting audio.
 
-    def start_tts_thread(self, client):
-        def text_to_speech_worker():
+        Args:
+            client: An instance of the TTS service client.
+
+        Returns:
+            The thread object handling the TTS conversion.
+        """
+
+        def text_to_speech_worker() -> None:
             while True:
-                sentence = self.speech_queue.get()
+                sentence: str = self.speech_queue.get()
                 if sentence is None:
                     break
-                self.text_to_speech(sentence, client)
-                self.speech_queue.task_done()
+                
+                if self.playback:
+                    self.text_to_speech(sentence, client)
+                    self.speech_queue.task_done()
 
-        tts_thread = threading.Thread(target=text_to_speech_worker)
+        tts_thread = threading.Thread(target=text_to_speech_worker, daemon=True)
         tts_thread.start()
-        tts_voice_thread = threading.Thread(target=self.audio_stream_worker)
+
+        tts_voice_thread = threading.Thread(target=self.audio_stream_worker, daemon=True)
         tts_voice_thread.start()
-       
+
         return tts_thread

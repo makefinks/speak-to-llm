@@ -1,7 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch
+torchvision
+torchaudio
+
 numpy
 sounddevice
 soundfile
-openai-whisper
 keyboard
 rich
 ollama
@@ -9,5 +13,4 @@ openai
 pyaudio
 elevenlabs
 pynput
-
 faster-whisper
