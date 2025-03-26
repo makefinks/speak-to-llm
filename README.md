@@ -1,6 +1,16 @@
 # speak-to-llm
 
 Speak-to-llm is a straightforward tool that lets you chat with Large Language Models through the terminal featuring low latency Text-To-Speech powered by OpenAI and ElevenLabs. It supports all models available on Ollama, including the latest ones like Llama3.3 and Phi-4 and Gwen 2.5.
+
+## How It Works
+
+The low latency is achieved through a streaming approach:
+
+1. **Sentence-by-Sentence Processing**: As the LLM generates text, the application splits the response into sentences
+2. **Parallel Processing**: Each complete sentence is immediately sent to the TTS service while the LLM continues generating the rest of the response.
+3. **Audio Streaming**: Audio is streamed back and played as soon as it's available, rather than waiting for the entire response to be processed.
+
+This approach reduces the perceived latency compared to traditional methods that wait for the entire LLM response before starting TTS processing or streaming.
 <hr> 
 
 ## Demo 🤖
